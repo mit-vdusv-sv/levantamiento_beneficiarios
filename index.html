@@ -4,10 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>REPORTE PROVINCIAL DE BENEFICIARIOS</title>
-
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="icon" type="image/png" href="icono_beneficiarios.png" />
+  <link rel="apple-touch-icon" href="icono_beneficiarios.png" />
+  <meta name="theme-color" content="#003E6B">
+  <link rel="manifest" href="manifest.webmanifest" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
   <style>
     :root{
@@ -53,14 +58,14 @@
       height:38px;
       border-radius:10px;
       background:white;
-      color:var(--azul);
       display:flex;
       align-items:center;
       justify-content:center;
-      font-weight:900;
-      letter-spacing:-1px;
       flex:0 0 auto;
+      overflow:hidden;
+      box-shadow:0 1px 6px rgba(0,0,0,.14);
     }
+    .logo img{width:100%;height:100%;object-fit:cover}
 
     .titlewrap{min-width:0}
     .title{
@@ -303,7 +308,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="logo">RP</div>
+      <div class="logo"><img src="icono_beneficiarios.png" alt="Ícono Reporte Provincial"></div>
       <div class="titlewrap">
         <div class="title">REPORTE PROVINCIAL DE BENEFICIARIOS</div>
         <div class="subtitle">Reporte provincial semanal conectado a Google Sheets</div>
@@ -331,6 +336,7 @@
         <input id="searchInput" type="search" placeholder="Cédula o nombre..." />
 
         <button id="refreshBtn">Actualizar ahora</button>
+        <button id="reportBtn">Generar reporte</button>
         <button class="secondary" id="clearBtn">Limpiar filtros</button>
       </section>
 
@@ -565,10 +571,13 @@
       const select = document.getElementById("weekSelect");
       const old = selectedWeekKey || select.value;
 
-      select.innerHTML = weeks.map(([key,label]) => `<option value="${key}">${label}</option>`).join("");
+      select.innerHTML = weeks.map(([key,label]) => `<option value="${key}">${label}</option>`).join("") +
+        `<option value="TODAS">Todas</option>`;
 
       const currentWeek = weekInfo(new Date()).key;
-      if (weeks.some(w => w[0] === old)) {
+      if (old === "TODAS") {
+        select.value = "TODAS";
+      } else if (weeks.some(w => w[0] === old)) {
         select.value = old;
       } else if (weeks.some(w => w[0] === currentWeek)) {
         select.value = currentWeek;
@@ -593,7 +602,7 @@
       selectedWeekKey = week;
 
       filteredRows = rawRows.filter(r => {
-        const okWeek = r.weekKey === week;
+        const okWeek = week === "TODAS" || r.weekKey === week;
         const okProv = province === "TODAS" || r.provincia === province;
         const okSearch = !q || normalize(r.nombre).includes(q) || normalize(r.cedula).includes(q);
         return okWeek && okProv && okSearch;
@@ -612,7 +621,7 @@
       const q = normalize(document.getElementById("searchInput").value);
 
       rawRows
-        .filter(r => r.weekKey === week)
+        .filter(r => week === "TODAS" || r.weekKey === week)
         .filter(r => !q || normalize(r.nombre).includes(q) || normalize(r.cedula).includes(q))
         .forEach(r => {
           if (!provinceStats[r.provincia]) provinceStats[r.provincia] = { total:0, a:0, b:0, rows:[] };
@@ -792,6 +801,121 @@
       else panel.classList.toggle("open");
     }
 
+    function reportTitleFilter(){
+      const weekText = document.getElementById("weekSelect").selectedOptions[0]?.text || "Todas";
+      const provinceText = document.getElementById("provinceSelect").value === "TODAS" ? "Todas las provincias" : document.getElementById("provinceSelect").value;
+      const q = document.getElementById("searchInput").value.trim();
+      return { weekText, provinceText, q };
+    }
+
+    function reportMatrix(){
+      const stats = {};
+      filteredRows.forEach(r => {
+        if (!stats[r.provincia]) stats[r.provincia] = { a:0, b:0, total:0 };
+        if (r.segmento === "1A") stats[r.provincia].a++;
+        if (r.segmento === "1B") stats[r.provincia].b++;
+        stats[r.provincia].total++;
+      });
+      return Object.entries(stats)
+        .sort((a,b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
+        .map(([prov,s]) => {
+          const avance = Math.min(100, Math.round((s.total / META_PROVINCIAL) * 100));
+          return [prov, s.a, s.b, s.total, avance + "%"];
+        });
+    }
+
+    function nationalAverageFromMatrix(matrix){
+      if (!matrix.length) return "0%";
+      const avg = Math.round(matrix.reduce((sum, row) => sum + Number(String(row[4]).replace("%","")), 0) / matrix.length);
+      return avg + "%";
+    }
+
+    function chartImage(chart){
+      try {
+        return chart?.toBase64Image("image/png", 1) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function generateReport(){
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        alert("No se pudo cargar la librería para generar PDF. Revisa tu conexión e intenta nuevamente.");
+        return;
+      }
+
+      applyFilters();
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 14;
+      const filters = reportTitleFilter();
+      const matrix = reportMatrix();
+      const total = filteredRows.length;
+      const totalA = filteredRows.filter(r => r.segmento === "1A").length;
+      const totalB = filteredRows.filter(r => r.segmento === "1B").length;
+      const avancePromedio = nationalAverageFromMatrix(matrix);
+
+      doc.addImage("icono_beneficiarios.png", "PNG", margin, 10, 18, 18);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("REPORTE PROVINCIAL DE BENEFICIARIOS", margin + 24, 16);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text(`Semana: ${filters.weekText}`, margin + 24, 22);
+      doc.text(`Provincia: ${filters.provinceText}`, margin + 24, 27);
+      if (filters.q) doc.text(`Búsqueda: ${filters.q}`, margin + 24, 32);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(`Total beneficiarios: ${total}`, margin, 42);
+      doc.text(`1A: ${totalA}`, margin + 48, 42);
+      doc.text(`1B: ${totalB}`, margin + 72, 42);
+      doc.text(`Avance promedio nacional: ${avancePromedio}`, margin + 98, 42);
+
+      doc.autoTable({
+        startY: 48,
+        head: [["Provincia", "Segmento 1A", "Segmento 1B", "Total", "Avance"]],
+        body: matrix.length ? matrix : [["Sin datos", 0, 0, 0, "0%"]],
+        foot: [["TOTAL", totalA, totalB, total, avancePromedio]],
+        theme: "grid",
+        headStyles: { fillColor: [0, 62, 107], textColor: 255, fontStyle: "bold" },
+        footStyles: { fillColor: [232, 243, 250], textColor: [31, 41, 55], fontStyle: "bold" },
+        styles: { fontSize: 8, cellPadding: 2 },
+        columnStyles: { 0: { cellWidth: 72 }, 1: { halign: "center" }, 2: { halign: "center" }, 3: { halign: "center" }, 4: { halign: "center" } },
+        margin: { left: margin, right: margin }
+      });
+
+      let y = doc.lastAutoTable.finalY + 10;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("Información secundaria: gráficos", margin, y);
+      y += 5;
+
+      const pieImg = chartImage(pieChart);
+      const barImg = chartImage(barChart);
+
+      if (pieImg) {
+        doc.setFontSize(9);
+        doc.text("Distribución por segmento", margin, y);
+        doc.addImage(pieImg, "PNG", margin, y + 3, 70, 55);
+      }
+
+      if (barImg) {
+        doc.setFontSize(9);
+        doc.text("Encuestas por provincia", margin + 82, y);
+        doc.addImage(barImg, "PNG", margin + 82, y + 3, pageWidth - margin * 2 - 82, 55);
+      }
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text(`Generado: ${new Date().toLocaleString("es-EC")}`, margin, 288);
+
+      const fileName = "reporte_provincial_beneficiarios.pdf";
+      doc.save(fileName);
+    }
+
     document.getElementById("weekSelect").addEventListener("change", applyFilters);
     document.getElementById("provinceSelect").addEventListener("change", () => {
       applyFilters();
@@ -801,6 +925,7 @@
     });
     document.getElementById("searchInput").addEventListener("input", applyFilters);
     document.getElementById("refreshBtn").addEventListener("click", fetchSheet);
+    document.getElementById("reportBtn").addEventListener("click", generateReport);
     document.getElementById("clearBtn").addEventListener("click", () => {
       document.getElementById("provinceSelect").value = "TODAS";
       document.getElementById("searchInput").value = "";
