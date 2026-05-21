@@ -649,12 +649,11 @@
       const province = document.getElementById("provinceSelect").value;
       let avg = 0;
       if (province !== "TODAS") {
-        avg = Math.min(100, Math.round((total / META_PROVINCIAL) * 100));
+        avg = excludedReportProvince(province)
+          ? 0
+          : Math.min(100, Math.round((total / META_PROVINCIAL) * 100));
       } else {
-        const provinces = Object.values(provinceStats);
-        if (provinces.length) {
-          avg = Math.round(provinces.reduce((sum, p) => sum + Math.min(100, (p.total / META_PROVINCIAL) * 100), 0) / provinces.length);
-        }
+        avg = nationalAverageIncludingZeroProvinces();
       }
 
       document.getElementById("totalKpi").textContent = total;
@@ -820,15 +819,11 @@
       return filteredRows.filter(r => !excludedReportProvince(r.provincia));
     }
 
-    function reportMatrix(){
-      const stats = {};
-      const selectedProvince = document.getElementById("provinceSelect").value;
 
+    function reportProvinceList(){
       let provincesBase = [];
 
-      if (selectedProvince !== "TODAS") {
-        provincesBase = [selectedProvince];
-      } else if (geoData && Array.isArray(geoData.features)) {
+      if (geoData && Array.isArray(geoData.features)) {
         provincesBase = geoData.features
           .map(f => normalize(
             f.properties?.PROVINCIA ||
@@ -839,6 +834,47 @@
           .filter(Boolean);
       } else {
         provincesBase = rawRows.map(r => r.provincia).filter(Boolean);
+      }
+
+      return [...new Set(provincesBase)]
+        .filter(prov => !excludedReportProvince(prov))
+        .sort((a,b) => a.localeCompare(b));
+    }
+
+    function nationalAverageIncludingZeroProvinces(){
+      const selectedProvince = document.getElementById("provinceSelect").value;
+      const provinces = selectedProvince !== "TODAS"
+        ? [selectedProvince].filter(prov => !excludedReportProvince(prov))
+        : reportProvinceList();
+
+      if (!provinces.length) return 0;
+
+      const totals = {};
+      provinces.forEach(prov => totals[prov] = 0);
+
+      filteredRows.forEach(r => {
+        if (excludedReportProvince(r.provincia)) return;
+        if (totals[r.provincia] === undefined) totals[r.provincia] = 0;
+        totals[r.provincia]++;
+      });
+
+      const avg = provinces.reduce((sum, prov) => {
+        return sum + Math.min(100, (totals[prov] / META_PROVINCIAL) * 100);
+      }, 0) / provinces.length;
+
+      return Math.round(avg);
+    }
+
+    function reportMatrix(){
+      const stats = {};
+      const selectedProvince = document.getElementById("provinceSelect").value;
+
+      let provincesBase = [];
+
+      if (selectedProvince !== "TODAS") {
+        provincesBase = [selectedProvince];
+      } else {
+        provincesBase = reportProvinceList();
       }
 
       provincesBase = [...new Set(provincesBase)]
