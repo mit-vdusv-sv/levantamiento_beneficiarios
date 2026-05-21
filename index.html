@@ -810,6 +810,16 @@
       return { weekText, provinceText, q };
     }
 
+
+    function excludedReportProvince(prov){
+      const p = normalize(prov);
+      return p === "NONE" || p === "GALAPAGOS";
+    }
+
+    function reportRows(){
+      return filteredRows.filter(r => !excludedReportProvince(r.provincia));
+    }
+
     function reportMatrix(){
       const stats = {};
       const selectedProvince = document.getElementById("provinceSelect").value;
@@ -831,13 +841,16 @@
         provincesBase = rawRows.map(r => r.provincia).filter(Boolean);
       }
 
-      provincesBase = [...new Set(provincesBase)].sort((a,b) => a.localeCompare(b));
+      provincesBase = [...new Set(provincesBase)]
+        .filter(prov => !excludedReportProvince(prov))
+        .sort((a,b) => a.localeCompare(b));
 
       provincesBase.forEach(prov => {
         stats[prov] = { a:0, b:0, total:0 };
       });
 
-      filteredRows.forEach(r => {
+      reportRows().forEach(r => {
+        if (excludedReportProvince(r.provincia)) return;
         if (!stats[r.provincia]) stats[r.provincia] = { a:0, b:0, total:0 };
         if (r.segmento === "1A") stats[r.provincia].a++;
         if (r.segmento === "1B") stats[r.provincia].b++;
@@ -883,9 +896,10 @@
       const filters = reportTitleFilter();
       const matrix = reportMatrix();
 
-      const total = filteredRows.length;
-      const totalA = filteredRows.filter(r => r.segmento === "1A").length;
-      const totalB = filteredRows.filter(r => r.segmento === "1B").length;
+      const rowsForReport = reportRows();
+      const total = rowsForReport.length;
+      const totalA = rowsForReport.filter(r => r.segmento === "1A").length;
+      const totalB = rowsForReport.filter(r => r.segmento === "1B").length;
       const avancePromedio = nationalAverageFromMatrix(matrix);
 
       // Logo
@@ -961,24 +975,37 @@
         footerY
       );
 
-      // Descarga mejorada para iPhone/PWA
+      // Compartir/descargar como ARCHIVO PDF, sin URL en el contenido compartido
       const fileName = "reporte_provincial_beneficiarios.pdf";
-
       const pdfBlob = doc.output("blob");
+      const pdfFile = new File([pdfBlob], fileName, { type: "application/pdf" });
 
-      const blobUrl = URL.createObjectURL(pdfBlob);
-
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = fileName;
-
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 1000);
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] }) && navigator.share) {
+        navigator.share({
+          files: [pdfFile],
+          title: "Reporte Provincial de Beneficiarios"
+        }).catch(() => {
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          const link = document.createElement("a");
+          link.href = blobUrl;
+          link.download = fileName;
+          link.rel = "noopener";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        });
+      } else {
+        const blobUrl = URL.createObjectURL(pdfBlob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = fileName;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      }
     }
 
     document.getElementById("weekSelect").addEventListener("change", applyFilters);
