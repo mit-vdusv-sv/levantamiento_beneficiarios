@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>REPORTE PROVINCIAL DE BENEFICIARIOS\nVICEMINISTERIO DE DESARROLLO URBANO SOSTENIBLE Y VIVIENDA</title>
+  <title>REPORTE PROVINCIAL DE BENEFICIARIOS</title>
   <link rel="icon" type="image/png" href="icono_beneficiarios.png" />
   <link rel="apple-touch-icon" href="icono_beneficiarios.png" />
   <meta name="theme-color" content="#003E6B">
@@ -849,6 +849,7 @@
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 14;
       const filters = reportTitleFilter();
       const matrix = reportMatrix();
@@ -857,25 +858,36 @@
       const totalB = filteredRows.filter(r => r.segmento === "1B").length;
       const avancePromedio = nationalAverageFromMatrix(matrix);
 
-      doc.addImage("icono_beneficiarios.png", "PNG", margin, 10, 18, 18);
+      // Encabezado
+      try {
+        doc.addImage("icono_beneficiarios.png", "PNG", margin, 9, 18, 18);
+      } catch (e) {
+        // Si el navegador no permite leer la imagen externa, el PDF continúa sin detenerse.
+      }
+
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
-      doc.text("REPORTE PROVINCIAL DE BENEFICIARIOS", margin + 24, 16);
+      doc.text("REPORTE PROVINCIAL DE BENEFICIARIOS", margin + 24, 15);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.text("VICEMINISTERIO DE DESARROLLO URBANO SOSTENIBLE Y VIVIENDA", margin + 24, 20);
+
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text(`Semana: ${filters.weekText}`, margin + 24, 22);
-      doc.text(`Provincia: ${filters.provinceText}`, margin + 24, 27);
-      if (filters.q) doc.text(`Búsqueda: ${filters.q}`, margin + 24, 32);
+      doc.setFontSize(8);
+      doc.text(`Semana: ${filters.weekText}`, margin + 24, 25);
+      doc.text(`Provincia: ${filters.provinceText}`, margin + 24, 30);
+      if (filters.q) doc.text(`Búsqueda: ${filters.q}`, margin + 24, 35);
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.text(`Total beneficiarios: ${total}`, margin, 42);
-      doc.text(`1A: ${totalA}`, margin + 48, 42);
-      doc.text(`1B: ${totalB}`, margin + 72, 42);
-      doc.text(`Avance promedio nacional: ${avancePromedio}`, margin + 98, 42);
+      doc.text(`Total beneficiarios: ${total}`, margin, 44);
+      doc.text(`1A: ${totalA}`, margin + 48, 44);
+      doc.text(`1B: ${totalB}`, margin + 72, 44);
+      doc.text(`Avance promedio nacional: ${avancePromedio}`, margin + 98, 44);
 
       doc.autoTable({
-        startY: 48,
+        startY: 50,
         head: [["Provincia", "Segmento 1A", "Segmento 1B", "Total", "Avance"]],
         body: matrix.length ? matrix : [["Sin datos", 0, 0, 0, "0%"]],
         foot: [["TOTAL", totalA, totalB, total, avancePromedio]],
@@ -888,29 +900,88 @@
       });
 
       let y = doc.lastAutoTable.finalY + 10;
+      if (y > 215) {
+        doc.addPage();
+        y = 18;
+      }
+
       doc.setFont("helvetica", "bold");
       doc.setFontSize(11);
       doc.text("Información secundaria: gráficos", margin, y);
-      y += 5;
+      y += 7;
 
-      const pieImg = chartImage(pieChart);
-      const barImg = chartImage(barChart);
+      // Gráfico 1: distribución por segmento, dibujado directamente en PDF
+      doc.setFontSize(9);
+      doc.text("Distribución por segmento", margin, y);
 
-      if (pieImg) {
-        doc.setFontSize(9);
-        doc.text("Distribución por segmento", margin, y);
-        doc.addImage(pieImg, "PNG", margin, y + 3, 70, 55);
-      }
+      const segX = margin;
+      const segY = y + 7;
+      const segW = 74;
+      const segH = 9;
+      const aW = total ? (segW * totalA / total) : 0;
+      const bW = total ? (segW * totalB / total) : 0;
 
-      if (barImg) {
-        doc.setFontSize(9);
-        doc.text("Encuestas por provincia", margin + 82, y);
-        doc.addImage(barImg, "PNG", margin + 82, y + 3, pageWidth - margin * 2 - 82, 55);
-      }
+      doc.setDrawColor(210, 210, 210);
+      doc.setFillColor(245, 247, 250);
+      doc.rect(segX, segY, segW, segH, "FD");
+
+      doc.setFillColor(0, 62, 107);
+      if (aW > 0) doc.rect(segX, segY, aW, segH, "F");
+
+      doc.setFillColor(34, 197, 94);
+      if (bW > 0) doc.rect(segX + aW, segY, bW, segH, "F");
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
-      doc.text(`Generado: ${new Date().toLocaleString("es-EC")}`, margin, 288);
+      doc.setTextColor(31, 41, 55);
+      doc.text(`1A: ${totalA}`, segX, segY + 16);
+      doc.text(`1B: ${totalB}`, segX + 33, segY + 16);
+      doc.text(`Total: ${total}`, segX, segY + 23);
+
+      // Gráfico 2: barras por provincia, dibujado directamente en PDF
+      const chartX = margin + 92;
+      let chartY = y;
+      const chartW = pageWidth - chartX - margin;
+      const barH = 4.2;
+      const gap = 2.4;
+      const entries = matrix
+        .slice()
+        .sort((a,b) => Number(b[3]) - Number(a[3]))
+        .slice(0, 12);
+      const maxVal = Math.max(1, ...entries.map(r => Number(r[3]) || 0));
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.text("Encuestas por provincia", chartX, chartY);
+      chartY += 7;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.7);
+
+      entries.forEach(row => {
+        const prov = String(row[0]);
+        const val = Number(row[3]) || 0;
+        const label = prov.length > 18 ? prov.substring(0, 18) + "…" : prov;
+        const barW = (chartW - 34) * val / maxVal;
+
+        doc.setTextColor(31, 41, 55);
+        doc.text(label, chartX, chartY + 3.2);
+
+        doc.setFillColor(232, 243, 250);
+        doc.rect(chartX + 31, chartY, chartW - 38, barH, "F");
+
+        doc.setFillColor(0, 62, 107);
+        if (barW > 0) doc.rect(chartX + 31, chartY, barW, barH, "F");
+
+        doc.text(String(val), chartX + chartW - 5, chartY + 3.2, { align: "right" });
+        chartY += barH + gap;
+      });
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+      const footerY = pageHeight - 9;
+      doc.text(`Generado: ${new Date().toLocaleString("es-EC")}`, margin, footerY);
 
       const fileName = "reporte_provincial_beneficiarios.pdf";
       doc.save(fileName);
