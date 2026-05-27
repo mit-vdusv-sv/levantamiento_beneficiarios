@@ -167,6 +167,14 @@
       margin-top:10px;
     }
     button.secondary{background:#64748B}
+    button.dashboard-btn{
+      background:#FACC15;
+      color:#003E6B;
+      border:2px solid #EAB308;
+      box-shadow:0 2px 8px rgba(0,0,0,.10);
+    }
+    button.dashboard-btn:hover{filter:brightness(.98)}
+    button.dashboard-btn:disabled{opacity:.75;cursor:wait}
 
     .kpis{
       display:grid;
@@ -348,6 +356,7 @@
 
         <button id="refreshBtn">Actualizar ahora</button>
         <button id="reportBtn">Generar reporte</button>
+        <button class="dashboard-btn" id="dashboardBtn">Ver registros página web</button>
         <button class="secondary" id="clearBtn">Limpiar filtros</button>
       </section>
 
@@ -418,6 +427,13 @@
     const GID = "0";
     const REFRESH_MS = 10000;
     const META_PROVINCIAL = 50;
+
+    const DASHBOARD_LOGIN_URL = "https://plan-vivienda.mit.gob.ec/api/v1/vivienda/dashboard/login";
+    const DASHBOARD_URL = "https://plan-vivienda.mit.gob.ec/dashboard";
+    const DASHBOARD_CREDENCIALES = {
+      usuario: "jordonez",
+      password: "Mit2026"
+    };
 
     const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
     const GEOJSON_CANDIDATES = [
@@ -1053,6 +1069,51 @@
       }
     }
 
+
+    async function abrirDashboardRegistros(){
+      const btn = document.getElementById("dashboardBtn");
+      const originalText = btn.textContent;
+
+      btn.disabled = true;
+      btn.textContent = "Abriendo registros...";
+
+      try {
+        const response = await fetch(DASHBOARD_LOGIN_URL, {
+          method: "POST",
+          mode: "cors",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(DASHBOARD_CREDENCIALES)
+        });
+
+        if (!response.ok) throw new Error("HTTP " + response.status);
+
+        const data = await response.json();
+
+        if (data && data.token) {
+          // Guardado local de respaldo. Si el dashboard usa cookie de sesión, bastará con abrir la página.
+          localStorage.setItem("miti_miti_dashboard_token", data.token);
+          localStorage.setItem("miti_miti_dashboard_usuario", data.usuario || DASHBOARD_CREDENCIALES.usuario);
+          localStorage.setItem("miti_miti_dashboard_expira", String(data.expiraEnEpochSec || ""));
+
+          window.location.href = DASHBOARD_URL;
+          return;
+        }
+
+        throw new Error(data?.mensajeRespuesta || "No se recibió token de acceso.");
+      } catch (error) {
+        console.error("No se pudo autenticar automáticamente en el dashboard:", error);
+        alert("No se pudo iniciar sesión automáticamente. Se abrirá el dashboard para ingreso manual.");
+        window.location.href = DASHBOARD_URL;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
     document.getElementById("weekSelect").addEventListener("change", applyFilters);
     document.getElementById("provinceSelect").addEventListener("change", () => {
       applyFilters();
@@ -1063,6 +1124,7 @@
     document.getElementById("searchInput").addEventListener("input", applyFilters);
     document.getElementById("refreshBtn").addEventListener("click", fetchSheet);
     document.getElementById("reportBtn").addEventListener("click", generateReport);
+    document.getElementById("dashboardBtn").addEventListener("click", abrirDashboardRegistros);
     document.getElementById("clearBtn").addEventListener("click", () => {
       document.getElementById("provinceSelect").value = "TODAS";
       document.getElementById("searchInput").value = "";
