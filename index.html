@@ -167,14 +167,42 @@
       margin-top:10px;
     }
     button.secondary{background:#64748B}
-    button.dashboard-btn{
-      background:#FACC15;
-      color:#003E6B;
-      border:2px solid #EAB308;
-      box-shadow:0 2px 8px rgba(0,0,0,.10);
+
+    button.dashboard-web{
+      background:linear-gradient(90deg,#0F766E,#14B8A6);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      box-shadow:0 4px 12px rgba(15,118,110,.22);
     }
-    button.dashboard-btn:hover{filter:brightness(.98)}
-    button.dashboard-btn:disabled{opacity:.75;cursor:wait}
+    button.dashboard-web:disabled{
+      opacity:.72;
+      cursor:wait;
+    }
+    .dashboard-status{
+      display:none;
+      margin-top:8px;
+      padding:8px 10px;
+      border-radius:10px;
+      background:#F1F5F9;
+      color:#334155;
+      font-size:11px;
+      line-height:1.35;
+      border:1px solid #E2E8F0;
+    }
+    .dashboard-status.error{
+      display:block;
+      background:#FEF2F2;
+      color:#991B1B;
+      border-color:#FECACA;
+    }
+    .dashboard-status.ok{
+      display:block;
+      background:#ECFDF5;
+      color:#065F46;
+      border-color:#A7F3D0;
+    }
 
     .kpis{
       display:grid;
@@ -356,7 +384,8 @@
 
         <button id="refreshBtn">Actualizar ahora</button>
         <button id="reportBtn">Generar reporte</button>
-        <button class="dashboard-btn" id="dashboardBtn">Ver registros página web</button>
+        <button class="dashboard-web" id="dashboardWebBtn" type="button">Ver registros página web</button>
+        <div class="dashboard-status" id="dashboardStatus"></div>
         <button class="secondary" id="clearBtn">Limpiar filtros</button>
       </section>
 
@@ -430,10 +459,8 @@
 
     const DASHBOARD_LOGIN_URL = "https://plan-vivienda.mit.gob.ec/api/v1/vivienda/dashboard/login";
     const DASHBOARD_URL = "https://plan-vivienda.mit.gob.ec/dashboard";
-    const DASHBOARD_CREDENCIALES = {
-      usuario: "jordonez",
-      password: "Mit2026"
-    };
+    const DASHBOARD_USER = "jordonez";
+    const DASHBOARD_PASSWORD = "Mit2026";
 
     const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
     const GEOJSON_CANDIDATES = [
@@ -1069,48 +1096,90 @@
       }
     }
 
+    function setDashboardStatus(message, type){
+      const el = document.getElementById("dashboardStatus");
+      if (!el) return;
+      el.textContent = message || "";
+      el.className = "dashboard-status" + (type ? " " + type : "");
+      el.style.display = message ? "block" : "none";
+    }
 
     async function abrirDashboardRegistros(){
-      const btn = document.getElementById("dashboardBtn");
-      const originalText = btn.textContent;
-
-      btn.disabled = true;
-      btn.textContent = "Abriendo registros...";
+      const btn = document.getElementById("dashboardWebBtn");
+      let popup = null;
 
       try {
+        btn.disabled = true;
+        btn.textContent = "Conectando...";
+        setDashboardStatus("Solicitando acceso al dashboard...", "ok");
+
+        // Se abre una pestaña vacía dentro del clic del usuario para evitar bloqueo de ventanas emergentes.
+        popup = window.open("about:blank", "_blank");
+        if (popup) {
+          popup.document.write("<p style='font-family:Arial;padding:20px'>Conectando con el Dashboard de Registros...</p>");
+        }
+
         const response = await fetch(DASHBOARD_LOGIN_URL, {
           method: "POST",
           mode: "cors",
           credentials: "include",
           headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "Content-Type": "application/json"
           },
-          body: JSON.stringify(DASHBOARD_CREDENCIALES)
+          body: JSON.stringify({
+            usuario: DASHBOARD_USER,
+            password: DASHBOARD_PASSWORD
+          })
         });
 
-        if (!response.ok) throw new Error("HTTP " + response.status);
-
-        const data = await response.json();
-
-        if (data && data.token) {
-          // Guardado local de respaldo. Si el dashboard usa cookie de sesión, bastará con abrir la página.
-          localStorage.setItem("miti_miti_dashboard_token", data.token);
-          localStorage.setItem("miti_miti_dashboard_usuario", data.usuario || DASHBOARD_CREDENCIALES.usuario);
-          localStorage.setItem("miti_miti_dashboard_expira", String(data.expiraEnEpochSec || ""));
-
-          window.location.href = DASHBOARD_URL;
-          return;
+        const rawText = await response.text();
+        let data = {};
+        try {
+          data = rawText ? JSON.parse(rawText) : {};
+        } catch (e) {
+          throw new Error("La API respondió, pero no devolvió un JSON válido. Respuesta: " + rawText.slice(0, 180));
         }
 
-        throw new Error(data?.mensajeRespuesta || "No se recibió token de acceso.");
+        if (!response.ok) {
+          throw new Error("La API respondió con estado HTTP " + response.status + ". Mensaje: " + (data.mensajeRespuesta || rawText));
+        }
+
+        if (data.codigoRespuesta !== "1" || !data.token) {
+          throw new Error(data.mensajeRespuesta || "La API no devolvió un token válido.");
+        }
+
+        // Guardamos el token en el dominio actual como respaldo de prueba.
+        // Ojo: el dashboard solo podrá leerlo si está programado para recibirlo desde la URL o si TICS implementa ese flujo.
+        localStorage.setItem("dashboard_token", data.token);
+        localStorage.setItem("dashboard_usuario", data.usuario || DASHBOARD_USER);
+        localStorage.setItem("dashboard_expira", String(data.expiraEnEpochSec || ""));
+
+        const token = encodeURIComponent(data.token);
+
+        // Intento principal: enviar el token por URL.
+        // Si el dashboard no reconoce este parámetro, TICS debe indicar el nombre exacto o el mecanismo esperado.
+        const targetUrl = `${DASHBOARD_URL}?token=${token}`;
+
+        setDashboardStatus("Token obtenido correctamente. Abriendo dashboard...", "ok");
+
+        if (popup && !popup.closed) {
+          popup.location.href = targetUrl;
+        } else {
+          window.open(targetUrl, "_blank");
+        }
       } catch (error) {
-        console.error("No se pudo autenticar automáticamente en el dashboard:", error);
-        alert("No se pudo iniciar sesión automáticamente. Se abrirá el dashboard para ingreso manual.");
-        window.location.href = DASHBOARD_URL;
+        console.error("Error al abrir Dashboard de Registros:", error);
+        setDashboardStatus("No se pudo abrir automáticamente el dashboard. Detalle técnico: " + error.message, "error");
+
+        if (popup && !popup.closed) {
+          popup.close();
+        }
+
+        alert("No se pudo iniciar sesión automáticamente en el dashboard. Revisa la consola del navegador o consulta a TICS con el detalle mostrado en el panel.");
       } finally {
         btn.disabled = false;
-        btn.textContent = originalText;
+        btn.textContent = "Ver registros página web";
       }
     }
 
@@ -1124,7 +1193,7 @@
     document.getElementById("searchInput").addEventListener("input", applyFilters);
     document.getElementById("refreshBtn").addEventListener("click", fetchSheet);
     document.getElementById("reportBtn").addEventListener("click", generateReport);
-    document.getElementById("dashboardBtn").addEventListener("click", abrirDashboardRegistros);
+    document.getElementById("dashboardWebBtn").addEventListener("click", abrirDashboardRegistros);
     document.getElementById("clearBtn").addEventListener("click", () => {
       document.getElementById("provinceSelect").value = "TODAS";
       document.getElementById("searchInput").value = "";
