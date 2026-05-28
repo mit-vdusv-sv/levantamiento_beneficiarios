@@ -1154,11 +1154,16 @@
         localStorage.setItem("dashboard_usuario", data.usuario || DASHBOARD_USER);
         localStorage.setItem("dashboard_expira", String(data.expiraEnEpochSec || ""));
 
-        const token = encodeURIComponent(data.token);
+        const ssoUrl = new URL("https://plan-vivienda.mit.gob.ec/dashboard/sso");
+        ssoUrl.searchParams.set("token", data.token);
 
-        // Intento principal: enviar el token por URL.
-        // Si el dashboard no reconoce este parámetro, TICS debe indicar el nombre exacto o el mecanismo esperado.
-        const targetUrl = `${DASHBOARD_URL}?token=${token}`;
+        if (data.usuario) {
+          ssoUrl.searchParams.set("usuario", data.usuario);
+        }
+
+        ssoUrl.searchParams.set("returnUrl", "/dashboard");
+
+        const targetUrl = ssoUrl.toString();
 
         setDashboardStatus("Token obtenido correctamente. Abriendo dashboard...", "ok");
 
